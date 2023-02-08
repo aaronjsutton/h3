@@ -1,3 +1,4 @@
+import { ReadableStream } from "node:stream/web";
 import supertest, { SuperTest, Test } from "supertest";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
@@ -37,6 +38,32 @@ describe("", () => {
         })
       );
 
+      expect(result.text).toBe("200");
+    });
+
+    it("can handle a stream", async () => {
+      let body: string | undefined = "initial";
+      app.use(
+        "/",
+        eventHandler(async (request) => {
+          body = await readRawBody(request);
+          return "200";
+        })
+      );
+
+      const readable = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            JSON.stringify({
+              bool: true,
+              name: "string",
+              number: 1,
+            })
+          );
+        },
+      });
+
+      const result = await request.post("/api/test").send(readable);
       expect(result.text).toBe("200");
     });
 

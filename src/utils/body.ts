@@ -29,29 +29,48 @@ export function readRawBody<E extends Encoding = "utf8">(
   }
 
   // Workaround for unenv issue https://github.com/unjs/unenv/issues/8
+  // Suuport ReadableStream in body.
+  let promise: Promise<Buffer>;
   if ("body" in event.node.req) {
-    return Promise.resolve((event.node.req as any).body);
-  }
+    const reader = (event.node.req.body as ReadableStream).getReader();
 
-  if (!Number.parseInt(event.node.req.headers["content-length"] || "")) {
-    return Promise.resolve(undefined);
-  }
-
-  const promise = ((event.node.req as any)[RawBodySymbol] = new Promise<Buffer>(
-    (resolve, reject) => {
-      const bodyData: any[] = [];
-      event.node.req
-        .on("error", (err) => {
-          reject(err);
+    promise = new Promise<Buffer>((resolve, reject) => {
+      const result: Buffer[] = [];
+      reader
+        .read()
+        .then(function process({ done, value }): Promise<void> | void {
+          if (done) {
+            resolve(Buffer.concat(result));
+            return;
+          }
+          result.push(Buffer.from(value));
+          return reader.read().then(process);
         })
-        .on("data", (chunk) => {
-          bodyData.push(chunk);
-        })
-        .on("end", () => {
-          resolve(Buffer.concat(bodyData));
+        .catch((error) => {
+          reject(error);
         });
+    });
+  } else {
+    if (!Number.parseInt(event.node.req.headers["content-length"] || "")) {
+      return Promise.resolve(undefined);
     }
-  ));
+
+    promise = (event.node.req as any)[RawBodySymbol] = new Promise<Buffer>(
+      (resolve, reject) => {
+        const bodyData: any[] = [];
+        event.node.req
+          .on("error", (err) => {
+            reject(err);
+          })
+          .on("data", (chunk) => {
+            bodyData.push(chunk);
+          })
+          .on("end", () => {
+            resolve(Buffer.concat(bodyData));
+          });
+      }
+    );
+  }
 
   const result = encoding
     ? promise.then((buff) => buff.toString(encoding))
@@ -77,7 +96,6 @@ export async function readBody<T = any>(event: H3Event): Promise<T> {
     return (event.node.req as any)[ParsedBodySymbol];
   }
 
-  // TODO: Handle buffer
   const body = (await readRawBody(event)) as string;
 
   if (
